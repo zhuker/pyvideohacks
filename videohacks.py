@@ -70,7 +70,7 @@ i_dont_care_seek_fast_please_i_know_what_i_am_doing = True
 
 
 def ffmpeg_cmd(ffp, downscale: float = 2.0, startframe: int = 0, endframe_inclusive: int = -1, interlaced=False,
-               crop: str = None, forcesar: Rational = None) -> List[str]:
+               crop: str = None, forcesar: Rational = None, forcefps: float = None) -> List[str]:
     vstream = video_stream(ffp)
     bps = int(vstream.get('bits_per_raw_sample', '8'))
     _sar = forcesar if forcesar is not None else sar(ffp)
@@ -119,6 +119,8 @@ def ffmpeg_cmd(ffp, downscale: float = 2.0, startframe: int = 0, endframe_inclus
         cmd.extend(['-i', videopath])
         if ss > 0:
             cmd.extend(['-ss', str(ss)])
+    if forcefps is not None:
+        cmd.extend(['-r', str(forcefps)])
     if endframe_inclusive > -1:
         cmd.extend(['-vframes', str(duration)])
 
@@ -210,7 +212,8 @@ class SimpleVideoLoader:
     def __init__(self, videopath: str, downscale: float = 1.0, startframe: int = 0,
                  endframe_inclusive: int = -1,
                  crop: str = None,
-                 forcesar: Rational = None):
+                 forcesar: Rational = None,
+                 forcefps: float = None):
         super(SimpleVideoLoader).__init__()
         assert startframe >= 0, "cant start with negative frame"
         self.videopath = videopath
@@ -261,7 +264,7 @@ class SimpleVideoLoader:
             interlaced = False
 
         self.cmd = ffmpeg_cmd(ffp, downscale, startframe, endframe_inclusive, interlaced=interlaced, crop=crop,
-                              forcesar=forcesar)
+                              forcesar=forcesar, forcefps=forcefps)
         self.fn = 0
         print(" ".join(self.cmd))
 
@@ -270,12 +273,15 @@ class SimpleVideoLoader:
 
     def _readnextframe(self) -> np.ndarray:
         if self.nextfn >= self.duration:
-            print("done")
+            # no more frames
             raise StopIteration()
         if self.process is None:
             self._forkffmpeg()
         expected_len = self.width16 * self.height16 * 3 * self.bytes_per_sample
         b = self.process.stdout.read(expected_len)
+        if len(b) == 0:
+            # end early
+            raise StopIteration()
         assert len(b) == expected_len, f"expected {expected_len} got {len(b)}"
         nb = np.frombuffer(b, dtype=np.dtype(self.dtype), count=self.width16 * self.height16 * 3).reshape(
             (self.height16, self.width16, 3))

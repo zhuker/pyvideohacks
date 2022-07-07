@@ -30,3 +30,18 @@ frame from live video (720, 1280, 3)
 frame from live video (720, 1280, 3)
 ...
 ```
+
+# Force FPS
+
+The following will force fps to 5, ffmpeg will drop frames to achieve the fps   
+```
+loader = SimpleVideoLoader("testdata/bipbop15_270_stereo.mp4", forcefps=5)
+count = 0
+for frame in loader:
+    print(frame.shape)
+    count += 1
+
+print("read", count, "frames")
+assert count == 77
+
+```
