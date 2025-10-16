@@ -1,5 +1,6 @@
 import collections
 import json
+import math
 import subprocess
 from math import ceil
 from subprocess import Popen
@@ -13,14 +14,23 @@ Rational = collections.namedtuple('Rational', ['num', 'den'])
 # for [1..255] return 256
 # for 256 return 256
 # for 0 return 0
-def align16up(x: int) -> int:
+def _align16up(x: int) -> int:
     return x + 15 & (-15 - 1)
 
 
-def ffprobejson(path: str):
-    process: Popen = subprocess.Popen(
-        ['ffprobe', '-hide_banner', '-i', path, '-show_streams', '-show_format', '-print_format', 'json'],
-        stdout=subprocess.PIPE)
+def align16up(x: int) -> int:
+    return int(x)
+
+
+def ffprobejson(path: str, show_packets=False, show_frames=False):
+    cmd = ['ffprobe', '-loglevel', 'quiet', '-hide_banner', '-i', path, '-show_streams', '-show_format',
+           '-print_format', 'json']
+    if show_packets:
+        cmd.append('-show_packets')
+    if show_frames:
+        cmd.append('-show_frames')
+    print(cmd)
+    process: Popen = subprocess.Popen(cmd, stdout=subprocess.PIPE)
     return process.communicate()[0]
 
 
@@ -41,6 +51,16 @@ def mediainfo(path: str):
 
 def video_stream(ffp):
     return next(filter(lambda x: x['codec_type'] == 'video', ffp['streams']))
+
+def nb_frames(ffp):
+    vstream = video_stream(ffp)
+    assert vstream is not None, "video stream not found"
+    if 'nb_frames' in vstream:
+        return int(vstream['nb_frames'])
+    if 'packets' in ffp:
+        framecount = len([p for p in ffp["packets"] if p["stream_index"] == vstream["index"]])
+        return framecount
+    return math.nan
 
 
 def parse_rational(r: str) -> Rational:
@@ -70,7 +90,8 @@ i_dont_care_seek_fast_please_i_know_what_i_am_doing = True
 
 
 def ffmpeg_cmd(ffp, downscale: float = 2.0, startframe: int = 0, endframe_inclusive: int = -1, interlaced=False,
-               crop: str = None, forcesar: Rational = None, forcefps: float = None) -> List[str]:
+               crop: str = None, forcesar: Rational = None, forcefps: float = None,
+               forcedimension: Tuple[int, int] = None, forcepixfmt: str = None) -> List[str]:
     vstream = video_stream(ffp)
     bps = int(vstream.get('bits_per_raw_sample', '8'))
     _sar = forcesar if forcesar is not None else sar(ffp)
@@ -89,6 +110,9 @@ def ffmpeg_cmd(ffp, downscale: float = 2.0, startframe: int = 0, endframe_inclus
         ss = startframe * _fps.den / _fps.num
 
     pix_fmt = "bgr48le" if bps > 8 else "bgr24"  # cv2.imread reads images in BGR order
+    if forcepixfmt is not None:
+        pix_fmt = forcepixfmt
+        bps = 8
     width = int(vstream['width'])
     height = int(vstream['height'])
     if crop is not None:
@@ -106,10 +130,12 @@ def ffmpeg_cmd(ffp, downscale: float = 2.0, startframe: int = 0, endframe_inclus
     if downscale != 1:
         width16 = align16up(int(width / downscale))
         height16 = align16up(int(height / downscale))
+    if forcedimension is not None:
+        width16, height16 = forcedimension
 
     videopath = ffp['format']['filename']
 
-    cmd: List[str] = ['ffmpeg']
+    cmd: List[str] = ['ffmpeg', '-hide_banner']
     if vstream['codec_name'] == 'prores' or i_dont_care_seek_fast_please_i_know_what_i_am_doing:
         # iframe-only codecs like prores can be quickly and precisely seeked
         if ss > 0:
@@ -119,12 +145,13 @@ def ffmpeg_cmd(ffp, downscale: float = 2.0, startframe: int = 0, endframe_inclus
         cmd.extend(['-i', videopath])
         if ss > 0:
             cmd.extend(['-ss', str(ss)])
-    if forcefps is not None:
-        cmd.extend(['-r', str(forcefps)])
     if endframe_inclusive > -1:
         cmd.extend(['-vframes', str(duration)])
 
     filters = [f"format={pix_fmt}"]
+
+    if forcefps is not None:
+        filters.append(f"fps={forcefps}")
 
     if interlaced:
         filters += ["yadif"]
@@ -213,7 +240,9 @@ class SimpleVideoLoader:
                  endframe_inclusive: int = -1,
                  crop: str = None,
                  forcesar: Rational = None,
-                 forcefps: float = None):
+                 forcefps: float = None,
+                 forcedimension: Tuple[int, int] = None,
+                 forcepixfmt: str = None):
         super(SimpleVideoLoader).__init__()
         assert startframe >= 0, "cant start with negative frame"
         self.videopath = videopath
@@ -236,6 +265,8 @@ class SimpleVideoLoader:
         self.duration = min(self.duration, endframe_inclusive - startframe + 1)
 
         bps = int(vstream.get('bits_per_raw_sample', 8))
+        if forcepixfmt is not None:
+            bps = 8
         self.bytes_per_sample = 2 if bps > 8 else 1
         self.max_val = 65535. if bps > 8 else 255.
         self.want255 = 1. / 257. if bps > 8 else 1.
@@ -257,6 +288,10 @@ class SimpleVideoLoader:
 
         self.width16 = align16up(int(width / downscale))
         self.height16 = align16up(int(height / downscale))
+        if forcedimension is not None:
+            self.width16 = forcedimension[0]
+            self.height16 = forcedimension[1]
+
         try:
             minfo = mediainfo(videopath)
             interlaced = minfo.get('Scan type', '') != 'Progressive'
@@ -264,7 +299,8 @@ class SimpleVideoLoader:
             interlaced = False
 
         self.cmd = ffmpeg_cmd(ffp, downscale, startframe, endframe_inclusive, interlaced=interlaced, crop=crop,
-                              forcesar=forcesar, forcefps=forcefps)
+                              forcesar=forcesar, forcefps=forcefps, forcedimension=forcedimension,
+                              forcepixfmt=forcepixfmt)
         self.fn = 0
         print(" ".join(self.cmd))
 
@@ -286,7 +322,25 @@ class SimpleVideoLoader:
         nb = np.frombuffer(b, dtype=np.dtype(self.dtype), count=self.width16 * self.height16 * 3).reshape(
             (self.height16, self.width16, 3))
         self.nextfn += 1
+        if self.dtype == np.uint8:
+            return nb
         return nb * self.want255
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.process is not None:
+            print("closing ffmpeg")
+            if self.process.stdin is not None:
+                self.process.stdin.close()
+            if self.process.stdout is not None:
+                self.process.stdout.close()
+            if self.process.stderr is not None:
+                self.process.stderr.close()
+            self.process.wait(42)
+            print("ffmpeg closed")
+        return True
 
     def __iter__(self):
         return self
