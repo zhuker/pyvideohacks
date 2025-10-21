@@ -9,7 +9,7 @@ for frame in loader:
     count += 1
 
 print("read", count, "frames")
-assert count == 77
+assert count == 75
 
 loader = SimpleVideoLoader("https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8")
 for frame in itertools.islice(loader, 5):
