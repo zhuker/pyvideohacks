@@ -488,7 +488,7 @@ class SimpleVideoLoader:
                 return fn, nb, meta
         return None, None, None
 
-    def _readnextframe(self):
+    def readnextframe(self):
         fn, nb, meta = self._take_frame_from_queue()
         if nb is not None:
             if self.needmetadata:
@@ -536,7 +536,7 @@ class SimpleVideoLoader:
             if self.needmetadata:
                 return fn, nb, meta
             return nb
-        raise StopIteration()
+        return None
 
     def __enter__(self):
         return self
@@ -549,7 +549,10 @@ class SimpleVideoLoader:
         return self
 
     def __next__(self):
-        return self._readnextframe()
+        r = self.readnextframe()
+        if r is None:
+            raise StopIteration()
+        return r
 
     def __len__(self):
         return self.duration
