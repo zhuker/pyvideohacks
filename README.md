@@ -31,6 +31,23 @@ frame from live video (720, 1280, 3)
 ...
 ```
 
+# Load frame timestamps and other metadata
+```python
+frames = 0
+with SimpleVideoLoader("testdata/bipbop15_270_stereo.mp4", metadata=True) as loader:
+    for fn, frame, meta in loader:
+        print(fn, frame.shape, meta)
+        self.assertEqual((270, 480, 3), frame.shape)
+        frames += 1
+self.assertEqual(449, frames)
+```
+Produces
+```
+0 (270, 480, 3) {'n': 0, 'pts': 2310, 'pts_time': 0.077, 'duration': 1000, 'duration_time': 0.0333333, 'fmt': 'bgr24'...
+1 (270, 480, 3) {'n': 1, 'pts': 3310, 'pts_time': 0.110333, 'duration': 1000, 'duration_time': 0.0333333, 'fmt': ...
+2 (270, 480, 3) {'n': 2, 'pts': 4310, 'pts_time': 0.143667, 'duration': 1000, 'duration_time': 0.0333333, 'fmt': ...
+```
+
 # Force FPS
 
 The following will force fps to 5, ffmpeg will drop frames to achieve the fps   

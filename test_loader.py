@@ -32,6 +32,7 @@ class LoaderTestCase(unittest.TestCase):
         frames = 0
         with SimpleVideoLoader("testdata/bipbop15_270_stereo.mp4", metadata=True) as loader:
             for fn, frame, meta in loader:
+                print(fn, frame.shape, meta)
                 self.assertEqual((270, 480, 3), frame.shape)
                 frames += 1
         self.assertEqual(449, frames)
